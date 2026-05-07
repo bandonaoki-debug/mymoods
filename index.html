@@ -150,14 +150,16 @@ body{
 }
 
 .legend-row{
-  display:flex;gap:12px;padding:0 16px 10px;
+  display:flex;gap:12px;padding:0 16px 10px;flex-wrap:wrap;
 }
 .legend-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--t3);}
-.legend-dot{width:7px;height:7px;border-radius:50%;}
+.legend-bar{width:18px;height:6px;border-radius:3px;}
 
 .cal-grid{
-  display:grid;grid-template-columns:repeat(7,1fr);
-  gap:2px;padding:0 10px;
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:0;
+  padding:0 10px;
 }
 
 .dl{
@@ -167,26 +169,50 @@ body{
 }
 
 .dc{
-  border-radius:9px;
-  border:1px solid transparent;
-  padding:5px 3px 4px;
+  border:none;
+  padding:4px 0 3px;
   cursor:pointer;
-  transition:background .1s;
-  min-height:50px;
+  min-height:56px;
   position:relative;
+  background:transparent;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
 }
-.dc:not(.empty):active{background:var(--s3);}
+.dc:not(.empty):active{opacity:.6;}
 .dc.empty{cursor:default;}
-.dc.today{border-color:var(--accent)!important;background:rgba(167,139,250,.07);}
-.dc.has-start{background:rgba(52,211,153,.06);}
-.dc.has-end{background:rgba(248,113,113,.06);}
-.dc.is-active{background:rgba(96,165,250,.04);}
 
-.dc-num{font-size:10px;color:var(--t3);line-height:1;text-align:center;}
-.dc.today .dc-num{color:var(--accent);font-weight:500;}
+.dc-num{
+  font-size:10px;color:var(--t3);line-height:1;
+  text-align:center;z-index:2;position:relative;
+  width:22px;height:22px;
+  display:flex;align-items:center;justify-content:center;
+  border-radius:50%;flex-shrink:0;margin-bottom:3px;
+}
+.dc.today .dc-num{
+  color:#1a0a3a;font-weight:700;
+  background:var(--accent);
+}
 
-.pip-row{display:flex;gap:2px;flex-wrap:wrap;margin-top:4px;justify-content:center;}
-.pip{width:5px;height:5px;border-radius:50%;}
+/* ── BANDS ── */
+.bands{
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  padding:0;
+}
+
+.band{
+  height:6px;
+  width:100%;
+  border-radius:0;
+  flex-shrink:0;
+}
+.band.cap-l  { border-radius:3px 0 0 3px; margin-left:3px; width:calc(100% - 3px); }
+.band.cap-r  { border-radius:0 3px 3px 0; margin-right:3px; width:calc(100% - 3px); }
+.band.cap-both{ border-radius:3px; margin:0 3px; width:calc(100% - 6px); }
+.band.gap    { background:transparent!important; }
 
 /* ── RECORDS PAGE ── */
 .section-head{
@@ -453,10 +479,8 @@ input[type="date"]{
         <span class="month-label" id="month-label"></span>
         <button class="mnav-btn" onclick="changeMonth(1)">&#8594;</button>
       </div>
-      <div class="legend-row">
-        <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>開始</div>
-        <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>終了</div>
-        <div class="legend-item"><div class="legend-dot" style="background:var(--blue)"></div>使用中</div>
+      <div class="legend-row" id="cal-legend">
+        <div class="legend-item"><div class="legend-bar" style="background:var(--accent);opacity:.85"></div>使用期間</div>
       </div>
       <div class="cal-grid" id="cal-grid"></div>
     </div>
@@ -573,38 +597,87 @@ function changeMonth(d){
 function renderCal(){
   const y=curDate.getFullYear(),m=curDate.getMonth();
   document.getElementById('month-label').textContent=`${y}年${m+1}月`;
-  const days=['日','月','火','水','木','金','土'];
+  const DAYS=['日','月','火','水','木','金','土'];
   const first=new Date(y,m,1).getDay();
   const last=new Date(y,m+1,0).getDate();
   const td=t0();
 
-  let h=days.map(d=>`<div class="dl">${d}</div>`).join('');
+  // Update legend with record colors
+  const legend=document.getElementById('cal-legend');
+  if(records.length){
+    legend.innerHTML=records.map(r=>{
+      const c=r.color||PALETTE[0];
+      return`<div class="legend-item"><div class="legend-bar" style="background:${c}"></div><span style="color:${c}">${r.name||'記録'}</span></div>`;
+    }).join('');
+  } else {
+    legend.innerHTML='<div class="legend-item"><div class="legend-bar" style="background:var(--accent);opacity:.5"></div>使用期間</div>';
+  }
+
+  // Build per-day band info: array of {color, type} per record
+  // type: 'start','mid','end','single','none'
+  function getBands(date){
+    const ds=fd(date);
+    const col=date.getDay(); // 0=Sun,6=Sat
+    return records.map(r=>{
+      const c=r.color||PALETTE[0];
+      const s=pd(r.start);
+      const e=r.end?pd(r.end):null;
+      if(!s)return null;
+      const isStart=fd(s)===ds;
+      const isEnd=e&&fd(e)===ds;
+      const isMid=date>s&&(!e||date<e);
+      const isSingle=isStart&&isEnd;
+      if(isSingle) return{c,type:'single'};
+      if(isStart)  return{c,type:'start',col};
+      if(isEnd)    return{c,type:'end',col};
+      if(isMid)    return{c,type:'mid',col};
+      return null;
+    }).filter(Boolean);
+  }
+
+  function bandClass(type,col){
+    if(type==='single') return'cap-both';
+    if(type==='start')  return'cap-l';
+    if(type==='end')    return'cap-r';
+    // mid: cap at week boundaries
+    if(col===0) return'cap-l';
+    if(col===6) return'cap-r';
+    return'';
+  }
+
+  let h=DAYS.map(d=>`<div class="dl">${d}</div>`).join('');
   for(let i=0;i<first;i++)h+=`<div class="dc empty"></div>`;
 
   for(let d=1;d<=last;d++){
     const date=new Date(y,m,d);
     const ds=fd(date);
     const isToday=date.getTime()===td.getTime();
-    let pips='',cls='';
+    const bands=getBands(date);
 
-    records.forEach(r=>{
-      const c=r.color||PALETTE[0];
-      const s=pd(r.start),e=r.end?pd(r.end):null;
-      if(fd(s)===ds){
-        pips+=`<div class="pip" style="background:${c}"></div>`;
-        cls='has-start';
-      }else if(e&&fd(e)===ds){
-        pips+=`<div class="pip" style="background:${c};opacity:.6"></div>`;
-        cls='has-end';
-      }else if(s&&date>s&&(!e||date<e)){
-        pips+=`<div class="pip" style="background:${c};opacity:.35"></div>`;
-        if(!cls)cls='is-active';
-      }
-    });
+    // Build band rows — one per record that has activity, gap for inactive
+    let bandHtml='';
+    if(bands.length){
+      // For each record show a band slot (gap if not active)
+      records.forEach(r=>{
+        const c=r.color||PALETTE[0];
+        const match=bands.find(b=>b.c===c);
+        if(match){
+          const bc=bandClass(match.type,date.getDay());
+          bandHtml+=`<div class="band ${bc}" style="background:${c};opacity:.85"></div>`;
+        } else {
+          // check if this record exists at all this month (show gap row only if record spans month)
+          const s=pd(r.start),e=r.end?pd(r.end):null;
+          const monthStart=new Date(y,m,1),monthEnd=new Date(y,m+1,0);
+          if(s<=monthEnd&&(!e||e>=monthStart)){
+            bandHtml+=`<div class="band gap"></div>`;
+          }
+        }
+      });
+    }
 
-    h+=`<div class="dc ${cls}${isToday?' today':''}" onclick="openModal('${ds}')">
+    h+=`<div class="dc${isToday?' today':''}" onclick="openModal('${ds}')">
       <div class="dc-num">${d}</div>
-      <div class="pip-row">${pips}</div>
+      <div class="bands">${bandHtml}</div>
     </div>`;
   }
   document.getElementById('cal-grid').innerHTML=h;
